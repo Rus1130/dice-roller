@@ -1,0 +1,284 @@
+<style>
+    button:focus, input:focus, select:focus, textarea:focus, [contenteditable]:focus {
+        outline:none;
+    }
+</style>
+<head>
+    <meta property="og:title" content="">
+    <meta property="og:description" content="">
+    <meta property="og:url" content="">
+</head>
+<body>
+    
+    
+</body>
+<script>
+
+    const sampleJSON = {
+        "server1": {
+            "inventory": {
+                6: 10,
+                10: 10
+            },
+            "money": 0,
+            "equippedDice": [10,10,10,10,10,10,10,10,10,10],
+            "items": {},
+            "equipSlots": 10,
+            "buffs": {
+                "crit": 0,
+                "skew": 0,
+                trueCrit: 1,
+                trueSkew: 1
+            },
+            stats: {
+                "totalRolls": 0,
+            }
+        },
+        "server2": {
+            "inventory": {
+                12: 5
+            },
+            "items": {},
+            "money": 1000,
+            "equippedDice": [12,12,12,12,12],
+            "equipSlots": 5,
+            "buffs": {
+                "crit": 0
+            },
+            stats: {
+                "totalRolls": 0,
+            }
+        }
+    }
+
+    class ActionResponse {
+        constructor(result, message){
+            this.result = result;
+            this.message = message;
+        }
+    }
+
+    class RollResults {
+        constructor(results, equippedDice = [], crits = []){
+            this.results = results;
+            this.total = results.reduce((a,b) => a + b, 0);
+            this.crits = crits;
+
+            const equippedDiceCounts = {};
+
+            for(let die of equippedDice){
+                if(equippedDiceCounts[die]){
+                    equippedDiceCounts[die]++;
+                } else {
+                    equippedDiceCounts[die] = 1;
+                }
+            }
+
+            const diceArray = [];
+
+            for(const die in equippedDiceCounts){
+                diceArray.push(`${equippedDiceCounts[die]}d${die}`);
+            }
+
+            this.equippedDice = diceArray.join(",");
+        }
+
+        toString(){
+            return this.results.join(",");
+        }
+    }
+
+    class DiceRoller {
+        static loadFromJSON(json, guildID){
+            const data = json[guildID];
+
+            const dr = new DiceRoller();
+
+            dr.user.inventory = data?.inventory || {6: 1};
+            dr.user.items = data?.items || {};
+            dr.user.money = data?.money || 0;
+            dr.user.equippedDice = data?.equippedDice || [];
+            dr.user.equipSlots = data?.equipSlots || 1;
+
+            dr.user.buffs = data?.buffs || {crit: 0, skew: 0};
+            if(dr.user.buffs.crit === undefined) dr.user.buffs.crit = 0;
+            if(dr.user.buffs.skew === undefined) dr.user.buffs.skew = 0;
+
+            dr.user.stats.totalRolls = data?.stats?.totalRolls || 0;
+            dr.user.guildID = guildID;
+            dr.loadedFrom = json;
+
+            return dr;
+        }
+
+        constructor(guildID){
+            this.loadedFrom = null;
+            this.user = {
+                guildID: guildID,
+                inventory: {},
+                money: 0,
+                equippedDice: [],
+                equipSlots: 0,
+                buffs: {
+                    crit: 0,
+                    trueCrit: 0,
+                    skew: 0,
+                    trueSkew: 0
+                },
+                stats: {
+                    totalRolls: 0,
+                    max10d10Roll: 0,
+                    min10d10Roll: 0
+                }
+            }
+        }
+
+        static BUFF_LIST = ["crit", "skew"];
+
+        setBuff(buff, value) {
+            if (!(buff in this.user.buffs) || !DiceRoller.BUFF_LIST.includes(buff)) {
+                return new ActionResponse(false, `Invalid buff: ${buff}`);
+            }
+
+            const max = this.user.buffs[`true${buff.charAt(0).toUpperCase()}${buff.slice(1)}`];
+
+            if (value < 0) {
+                return new ActionResponse(false, `${buff} cannot be less than 0.`);
+            }
+
+            if (value > max) {
+                return new ActionResponse(false, `${buff} cannot exceed ${max}.`);
+            }
+
+            this.user.buffs[buff] = value;
+
+            return new ActionResponse(true, `${buff} changed to ${value}.`);
+        }
+
+        modifyBuff(buff, amount) {
+            if (!(buff in this.user.buffs) || !DiceRoller.BUFF_LIST.includes(buff)) {
+                return new ActionResponse(false, `Invalid buff: ${buff}`);
+            }
+
+            const trueBuff = `true${buff.charAt(0).toUpperCase()}${buff.slice(1)}`;
+
+            this.user.buffs[trueBuff] += amount;
+
+            if (this.user.buffs[trueBuff] < 0) {
+                return new ActionResponse(false, `${trueBuff} cannot be less than 0.`);
+            }
+
+            if (this.user.buffs[buff] > this.user.buffs[trueBuff]) {
+                return new ActionResponse(false, `${buff} cannot exceed ${this.user.buffs[trueBuff]}.`);
+            }
+
+            return new ActionResponse(true, `${trueBuff} changed to ${this.user.buffs[trueBuff]}.`);
+        }
+
+        randomInt(max, skew = 0) {
+            if (skew === 0) {
+                return Math.floor(Math.random() * max) + 1;
+            }
+
+            if (Math.random() < skew) {
+                return max;
+            }
+
+            return Math.floor(Math.random() * (max - 1)) + 1;
+        }
+
+        rollOnce() {
+            if (this.user.equippedDice.length === 0) {
+                return new ActionResponse(false, "You have no dice equipped.");
+            }
+
+            const results = [];
+            const crits = [];
+
+            for (let i = 0; i < this.user.equippedDice.length; i++) {
+                const die = this.user.equippedDice[i];
+
+                results.push(this.randomInt(die, this.user.buffs.skew));
+
+                if (Math.random() < this.user.buffs.crit) {
+                    crits.push(results.length);
+                    results.push(this.randomInt(die, this.user.buffs.skew));
+                }
+            }
+
+            this.user.stats.totalRolls += this.user.equippedDice.length;
+
+            const rollResult = new RollResults(results, this.user.equippedDice, crits);
+
+            // check if the rollResult is a 10d10, and all buffs are zero
+            if (rollResult.equippedDice == "10d10" && this.user.buffs.crit === 0 && this.user.buffs.skew === 0) {
+                if (rollResult.total > this.user.stats.max10d10Roll) {
+                    this.user.stats.max10d10Roll = rollResult.total;
+                }
+
+                if (rollResult.total < this.user.stats.min10d10Roll || this.user.stats.min10d10Roll === 0) {
+                    this.user.stats.min10d10Roll = rollResult.total;
+                }
+            }
+
+            return rollResult;
+        }
+
+        roll(times) {
+            if (this.user.equippedDice.length === 0) {
+                return new ActionResponse(false, "You have no dice equipped.");
+            }
+
+            const allResults = [];
+            const crits = [];
+
+            for (let i = 0; i < times; i++) {
+                const result = this.rollOnce();
+
+                const offset = allResults.length;
+
+                crits.push(...result.crits.map(index => index + offset));
+                allResults.push(...result.results);
+            }
+
+            return new RollResults(
+                allResults,
+                this.user.equippedDice,
+                crits
+            );
+        }
+
+        equipDice(...diceID){
+            for(const id of diceID){
+                if(this.user.equippedDice.length >= this.user.equipSlots) return new ActionResponse(false, "You have no more equip slots available.");
+                if(!this.user.inventory[id] || this.user.inventory[id] <= 0) return new ActionResponse(false, `You do not have any ${id}-sided dice in your inventory.`);
+                
+                this.user.inventory[id]--;
+                this.user.equippedDice.push(id);
+            }
+            return new ActionResponse(true, "Dice equipped successfully.");
+        }
+
+        unequipDice(...diceID){
+            for(const id of diceID){
+                const index = this.user.equippedDice.indexOf(id);
+                if(index === -1) return new ActionResponse(false, `You do not have any ${id}-sided dice equipped.`);
+                
+                this.user.equippedDice.splice(index, 1);
+                this.user.inventory[id] = (this.user.inventory[id] || 0) + 1;
+            }
+            return new ActionResponse(true, "Dice unequipped successfully.");
+        }
+
+        toJSON(){
+            const jsonCopy = structuredClone(this.loadedFrom);
+            jsonCopy[this.user.guildID] = structuredClone(this.user);
+            return JSON.stringify(jsonCopy, null, 4);
+        }   
+    }
+
+    const diceRoller = DiceRoller.loadFromJSON(sampleJSON, "server1");
+
+    console.log(diceRoller)
+    
+</script>
