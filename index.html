@@ -187,6 +187,15 @@
             return Math.floor(Math.random() * (max - 1)) + 1;
         }
 
+        checkIfAllBuffsZero() {
+            for (const buff of DiceRoller.BUFF_LIST) {
+                if (this.user.buffs[buff] !== 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         rollOnce() {
             if (this.user.equippedDice.length === 0) {
                 return new ActionResponse(false, "You have no dice equipped.");
@@ -211,7 +220,7 @@
             const rollResult = new RollResults(results, this.user.equippedDice, crits);
 
             // check if the rollResult is a 10d10, and all buffs are zero
-            if (rollResult.equippedDice == "10d10" && this.user.buffs.crit === 0 && this.user.buffs.skew === 0) {
+            if (rollResult.equippedDice == "10d10" && this.checkIfAllBuffsZero()) {
                 if (rollResult.total > this.user.stats.max10d10Roll) {
                     this.user.stats.max10d10Roll = rollResult.total;
                 }
