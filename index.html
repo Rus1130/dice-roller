@@ -112,7 +112,7 @@
         }
 
         constructor(guildID){
-            this.loadedFrom = null;
+            this.loadedFrom = {};
             this.user = {
                 guildID: guildID,
                 inventory: {},
@@ -127,8 +127,8 @@
                 },
                 stats: {
                     totalRolls: 0,
-                    max10d10Roll: 0,
-                    min10d10Roll: 0
+                    comp10d10Max: 0,
+                    comp10d10Min: 0
                 }
             }
         }
@@ -196,6 +196,22 @@
             return true;
         }
 
+        checkForCompetitiveMax(type, rollResult){
+            if(this.checkIfAllBuffsZero()){
+                if(rollResult.total > this.user.stats[`comp${type}Max`] ){
+                    this.user.stats[`comp${type}Max`] = rollResult.total;
+                }
+            }
+        }
+
+        checkForCompetitiveMin(type, rollResult){
+            if(this.checkIfAllBuffsZero()){
+                if(rollResult.total < this.user.stats[`comp${type}Min`] || this.user.stats[`comp${type}Min`] === 0){
+                    this.user.stats[`comp${type}Min`] = rollResult.total;
+                }
+            }
+        }
+
         rollOnce() {
             if (this.user.equippedDice.length === 0) {
                 return new ActionResponse(false, "You have no dice equipped.");
@@ -219,16 +235,8 @@
 
             const rollResult = new RollResults(results, this.user.equippedDice, crits);
 
-            // check if the rollResult is a 10d10, and all buffs are zero
-            if (rollResult.equippedDice == "10d10" && this.checkIfAllBuffsZero()) {
-                if (rollResult.total > this.user.stats.max10d10Roll) {
-                    this.user.stats.max10d10Roll = rollResult.total;
-                }
-
-                if (rollResult.total < this.user.stats.min10d10Roll || this.user.stats.min10d10Roll === 0) {
-                    this.user.stats.min10d10Roll = rollResult.total;
-                }
-            }
+            this.checkForCompetitiveMax("10d10", rollResult);
+            this.checkForCompetitiveMin("10d10", rollResult);
 
             return rollResult;
         }
@@ -279,6 +287,26 @@
             return new ActionResponse(true, "Dice unequipped successfully.");
         }
 
+        loadFromJSON(json){
+            const data = json[this.user.guildID];
+
+            this.user.inventory = data?.inventory || {6: 1};
+            this.user.items = data?.items || {};
+            this.user.money = data?.money || 0;
+            this.user.equippedDice = data?.equippedDice || [];
+            this.user.equipSlots = data?.equipSlots || 1;
+
+            this.user.buffs = data?.buffs || {crit: 0, skew: 0};
+            if(this.user.buffs.crit === undefined) this.user.buffs.crit = 0;
+            if(this.user.buffs.skew === undefined) this.user.buffs.skew = 0;
+
+            this.user.stats.totalRolls = data?.stats?.totalRolls || 0;
+            this.user.guildID = this.user.guildID;
+            this.loadedFrom = json;
+
+            return this;
+        }
+
         toJSON(){
             const jsonCopy = structuredClone(this.loadedFrom);
             jsonCopy[this.user.guildID] = structuredClone(this.user);
@@ -286,7 +314,7 @@
         }   
     }
 
-    const diceRoller = DiceRoller.loadFromJSON(sampleJSON, "server1");
+    const diceRoller = new DiceRoller("server1").loadFromJSON(sampleJSON)
 
     console.log(diceRoller)
     
